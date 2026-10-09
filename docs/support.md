@@ -162,6 +162,10 @@ claude plugin uninstall delm@delm --scope user --keep-data
 
 Restart Claude Code after an update. These commands manage a user-scoped installation; review any different or duplicate scope through Claude's native plugin manager.
 
+### Freeing space held by finished runs
+
+Workers build inside their private copies, and a run that ends in `recovery_required` preserves those build directories (`target/`, `node_modules/`, `dist/`) in its recovery bundle, which can reach tens of gigabytes. `python3 scripts/prune_runs.py` removes such directories from the worker copies and from the bundle of every finished run, rewriting `complete.json` so `delm recover` still verifies; source changes stay recoverable. `--dry-run` reports what would be freed, `--remove <run-id>` deletes a whole run once its work has been recovered, and `--quiet` prints one line for git hooks. A run whose runtime is still alive is never touched.
+
 ### Retained state and contributor installations
 
 Each run retains its executable under `~/Library/Application Support/DeLM/runtimes/<sha256>/delm`. Codex events expose it as `control_executable`; Claude stores the retained path with its native control state. Status, cancellation, and recovery use the retained runtime instead of assuming the installed package has stayed unchanged. Codex detects changed or removed bound package resources and stops its run; Claude reload recovery confirms recorded native ownership has stopped before removing workspaces. Uninstalling does not erase DeLM run records or host account credentials. The [common installer](../packages/installer/README.md) delegates maintenance to the selected host and preserves its marketplace registration.
