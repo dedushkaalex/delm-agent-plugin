@@ -801,3 +801,55 @@ fn explicit_source_only_contract_keeps_incidental_build_output_without_blocking_
         assert!(report.cleanup_complete && prepared.workers.iter().all(|path| !path.exists()));
     }
 }
+
+#[test]
+fn tagged_cache_directories_are_neither_hashed_nor_preserved() {
+    let (_temp, prepared) = fixture();
+    let worker = &prepared.workers[0];
+    fs::write(worker.join(".gitignore"), "target/\nrenders/\n").unwrap();
+    fs::create_dir_all(worker.join("target/debug")).unwrap();
+    fs::write(
+        worker.join("target/CACHEDIR.TAG"),
+        "Signature: 8a477f597d28d172789f06886806bc55\n# This file is a cache directory tag created by cargo.\n",
+    )
+    .unwrap();
+    fs::write(worker.join("target/debug/app.o"), "object bytes").unwrap();
+    fs::create_dir(worker.join("renders")).unwrap();
+    fs::write(worker.join("renders/movie.mp4"), "movie bytes").unwrap();
+    let accepted = ResultSelection::new(&prepared.baseline_manifest, vec![])
+        .unwrap()
+        .capture(worker)
+        .unwrap();
+    assert_eq!(accepted.undelivered_outputs, ["renders/movie.mp4"]);
+    assert!(
+        accepted
+            .manifest
+            .files
+            .keys()
+            .all(|path| !path.starts_with("target"))
+    );
+    let recovery = preserve_partial_and_cleanup(&prepared).unwrap();
+    let inspected = inspect_recovery(&recovery.recovery).unwrap();
+    let saved: Vec<_> = inspected.workers[0]
+        .changes
+        .iter()
+        .map(|entry| entry.path.as_str())
+        .collect();
+    assert!(saved.contains(&"renders/movie.mp4"));
+    assert!(saved.iter().all(|path| !path.starts_with("target")));
+
+    let (_temp, prepared) = fixture();
+    let worker = &prepared.workers[0];
+    fs::write(worker.join(".gitignore"), "target/\n").unwrap();
+    fs::create_dir_all(worker.join("target/debug")).unwrap();
+    fs::write(worker.join("target/CACHEDIR.TAG"), "not a cache tag\n").unwrap();
+    fs::write(worker.join("target/debug/app.o"), "object bytes").unwrap();
+    let accepted = ResultSelection::new(&prepared.baseline_manifest, vec![])
+        .unwrap()
+        .capture(worker)
+        .unwrap();
+    assert_eq!(
+        accepted.undelivered_outputs,
+        ["target/CACHEDIR.TAG", "target/debug/app.o"]
+    );
+}

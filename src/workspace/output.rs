@@ -68,6 +68,28 @@ pub(super) fn git_names(worker: &Path, args: &[&str]) -> Result<BTreeSet<String>
         .collect()
 }
 
+const CACHEDIR_TAG_SIGNATURE: &[u8] = b"Signature: 8a477f597d28d172789f06886806bc55";
+
+pub(super) fn cache_roots(root: &File, names: &BTreeSet<String>) -> Result<BTreeSet<String>> {
+    let mut caches = BTreeSet::new();
+    for path in names {
+        let Some(directory) = path.strip_suffix("/CACHEDIR.TAG") else {
+            continue;
+        };
+        let Ok(tag) = open_relative(root, path, false) else {
+            continue;
+        };
+        if !tag.metadata()?.is_file() {
+            continue;
+        }
+        let mut head = vec![0; CACHEDIR_TAG_SIGNATURE.len()];
+        if (&tag).read_exact(&mut head).is_ok() && head == CACHEDIR_TAG_SIGNATURE {
+            caches.insert(directory.to_owned());
+        }
+    }
+    Ok(caches)
+}
+
 /// A configuration filename alone is not evidence of a disposable Python
 /// environment. Require the standard fields and an interpreter in its bin tree.
 pub(super) fn environment_roots(root: &File, names: &BTreeSet<String>) -> Result<BTreeSet<String>> {
@@ -157,8 +179,10 @@ impl ResultSelection {
         )?;
         let names = git_names(worker, &["ls-files", "--cached", "--others", "-z"])?;
         let environments = environment_roots(&root, &names)?;
+        let caches = cache_roots(&root, &names)?;
         let artifact = |path: &str| self.artifacts.iter().any(|scope| in_scope(path, scope));
         let dependency = |path: &str| environments.iter().any(|scope| in_scope(path, scope));
+        let cached = |path: &str| caches.iter().any(|scope| in_scope(path, scope));
         for scope in &self.artifacts {
             ensure!(
                 !dependency(scope),
@@ -172,7 +196,9 @@ impl ResultSelection {
                 || self.artifacts.iter().any(|scope| in_scope(scope, path))
                 || contains_within(&self.baseline_paths, path)
                 || contains_within(&tracked, path);
-            !protected && (dependency(path) || (disposable(path) && !source.contains(path)))
+            !protected
+                && (dependency(path)
+                    || ((cached(path) || disposable(path)) && !source.contains(path)))
         };
         let inspected = inventory_filtered(&root, u64::MAX, deadline(), false, Some(&skip))?;
         let mut files: BTreeMap<_, _> = inspected
@@ -227,7 +253,11 @@ impl ResultSelection {
                         || (entry.kind == FileKind::Directory && !ignored_dirs.contains(path))))
             {
                 selected.insert(path.clone());
-            } else if entry.kind != FileKind::Directory && !dependency(path) && !disposable(path) {
+            } else if entry.kind != FileKind::Directory
+                && !dependency(path)
+                && !cached(path)
+                && !disposable(path)
+            {
                 undelivered_outputs.push(path.clone());
             }
         }

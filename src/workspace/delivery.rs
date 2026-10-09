@@ -903,6 +903,7 @@ fn preserve_partial(prepared: &PreparedWorkspace, artifacts: &[String]) -> Resul
         let root = open_dir(path)?;
         let names = output::git_names(path, &["ls-files", "--cached", "--others", "-z"])?;
         let environments = output::environment_roots(&root, &names)?;
+        let caches = output::cache_roots(&root, &names)?;
         let tracked = output::git_names(path, &["ls-files", "--cached", "-z"])?;
         let source = output::git_names(
             path,
@@ -930,8 +931,9 @@ fn preserve_partial(prepared: &PreparedWorkspace, artifacts: &[String]) -> Resul
                     .any(|env| relative == env || relative.starts_with(&format!("{env}/")))
                     || (!artifact
                         && !source
-                        && output::disposable(relative)
-                        && !relative.ends_with(".log")))
+                        && (caches.iter().any(|cache| {
+                            relative == cache || relative.starts_with(&format!("{cache}/"))
+                        }) || (output::disposable(relative) && !relative.ends_with(".log")))))
         };
         let scan = inventory_filtered(&root, u64::MAX, deadline(), false, Some(&skip))?;
         let after = Manifest {
