@@ -570,8 +570,11 @@ fn references_run(pid: u32, roots: &[PathBuf]) -> Result<bool> {
         )
     };
     if result <= 0 {
-        return Err(std::io::Error::last_os_error())
-            .context("inspect process working directory metadata");
+        let error = std::io::Error::last_os_error();
+        if error.raw_os_error() == Some(libc::EPERM) && protected_system_executable(pid) {
+            return Ok(false);
+        }
+        return Err(error).context("inspect process working directory metadata");
     }
     ensure!(
         result == size,
@@ -657,6 +660,11 @@ fn references_run(pid: u32, roots: &[PathBuf]) -> Result<bool> {
             if [Some(libc::EBADF), Some(libc::ENOENT), Some(libc::ESRCH)]
                 .contains(&error.raw_os_error())
             {
+                continue;
+            }
+            // macOS refuses descriptor metadata of hardened system processes.
+            // Those never hold DeLM workspace files, so they cannot veto cleanup.
+            if error.raw_os_error() == Some(libc::EPERM) && protected_system_executable(pid) {
                 continue;
             }
             return Err(error).context("inspect process vnode metadata");
@@ -812,6 +820,22 @@ fn process_name(pid: u32) -> String {
 #[cfg(not(target_os = "macos"))]
 fn process_name(_pid: u32) -> String {
     "unknown process".into()
+}
+
+const PROTECTED_SYSTEM_PREFIXES: [&str; 2] = ["/System/", "/usr/libexec/"];
+
+fn protected_system_path(path: &str) -> bool {
+    PROTECTED_SYSTEM_PREFIXES
+        .iter()
+        .any(|prefix| path.starts_with(prefix))
+}
+
+#[cfg(target_os = "macos")]
+fn protected_system_executable(pid: u32) -> bool {
+    let mut buffer = [0u8; libc::PROC_PIDPATHINFO_MAXSIZE as usize];
+    let length =
+        unsafe { libc::proc_pidpath(pid as i32, buffer.as_mut_ptr().cast(), buffer.len() as u32) };
+    length > 0 && protected_system_path(&String::from_utf8_lossy(&buffer[..length as usize]))
 }
 
 fn inspect_workspace_references(
@@ -1213,5 +1237,30 @@ mod quiet_tests {
         .unwrap();
         assert!(start.elapsed() >= QUIET);
         assert!(start.elapsed() < STOP_BOUND);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_hardened_system_executables_are_exempt_from_descriptor_inspection() {
+        assert!(protected_system_path(
+            "/System/Library/CoreServices/Spotlight.app/Contents/MacOS/Spotlight"
+        ));
+        assert!(protected_system_path("/usr/libexec/trustd"));
+        assert!(!protected_system_path("/usr/bin/git"));
+        assert!(!protected_system_path(
+            "/Applications/Claude.app/Contents/MacOS/Claude"
+        ));
+        assert!(!protected_system_path("/Users/alex/.cargo/bin/cargo"));
+        assert!(!protected_system_path("/Systemic/tool"));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn the_test_binary_itself_is_not_a_protected_system_executable() {
+        assert!(!protected_system_executable(std::process::id()));
     }
 }

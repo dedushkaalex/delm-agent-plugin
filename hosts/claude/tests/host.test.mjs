@@ -32,7 +32,7 @@ async function fixture(options = {}) {
       handler: typeof matcher === 'function' ? matcher : handler});
     return {catch: () => {}};
   });
-  const requests = [], commands = [], timers = [], notices = [], prompts = [], directories = [];
+  const requests = [], commands = [], timers = [], notices = [], prompts = [], directories = [], spawns = [];
   const agents = new Map(), store = options.store || new Map();
   let session = options.session || 'session-fixture', revision = 1;
   let finalization = null, generation = 0;
@@ -56,7 +56,7 @@ async function fixture(options = {}) {
     store: {get: async key => store.get(key), set: async (key, value) => { store.set(key, structuredClone(value)); }},
     fs: {read: async () => 'Shared DeLM worker contract.'},
     process: {
-      spawn: () => createStream(),
+      spawn: init => { spawns.push(init); return createStream(); },
       run: async (argv, init) => {
         directories.push({argv: argv.slice(1, 3).join(' '), cwd: init.cwd});
         const request = JSON.parse(init.stdin);
@@ -156,7 +156,7 @@ async function fixture(options = {}) {
     else state.queued.push(item);
     await setImmediate();
   }
-  return {host, call, step, launch, spawn, event, requests, agents, timers, prompts, store, notices, directories,
+  return {host, call, step, launch, spawn, event, requests, agents, timers, prompts, store, notices, directories, spawns,
     retryFinish: () => module.retryFinish(host,session), select: id => { session = id; }};
 }
 
@@ -181,6 +181,37 @@ test('event decoder preserves split records and refuses unbounded input', () => 
   assert.deepEqual(first.events, []);
   assert.deepEqual(protocol.decodeLines(first.rest, 'tion"}\n').events, [{type: 'action'}]);
   assert.throws(() => protocol.decodeLines('', 'x'.repeat(2 * 1024 * 1024 + 1)));
+});
+
+test('the run command forwards an execution allowance prefix and strips it from the task', async () => {
+  const f = await fixture();
+  await f.call('session.start', {cwd: '/fixture/project'});
+  const result = await f.call('command.run', {command: 'delm:run', args: '--hours 1.5 Build a useful tool.'});
+  const request = JSON.parse(f.spawns[0].input);
+  assert.equal(request.seconds, 5400);
+  assert.equal(request.task, 'Build a useful tool.');
+  assert.match(result.args, /Build a useful tool\./);
+  assert.doesNotMatch(result.args, /--hours/);
+});
+
+test('a run without an allowance prefix leaves the runtime default in place', async () => {
+  const f = await fixture();
+  await f.call('session.start', {cwd: '/fixture/project'});
+  await f.call('command.run', {command: 'delm:run', args: '--minutes-ish Build a useful tool.'});
+  const request = JSON.parse(f.spawns[0].input);
+  assert.equal('seconds' in request, false);
+  assert.equal(request.task, '--minutes-ish Build a useful tool.');
+});
+
+test('an allowance outside one minute to 24 hours is refused before any workspace is prepared', async () => {
+  const f = await fixture();
+  await f.call('session.start', {cwd: '/fixture/project'});
+  const result = await f.call('command.run', {command: 'delm:run', args: '--hours 25 Build a useful tool.'});
+  assert.match(result.text, /between one minute and 24 hours/);
+  assert.equal(result.exitCode, 1);
+  assert.equal(f.spawns.length, 0);
+  const bare = await f.call('command.run', {command: 'delm:run', args: '--minutes 90'});
+  assert.match(bare.text, /followed by the task/);
 });
 
 test('missing native MCP tools stop before workspace preparation or model launch', async () => {

@@ -56,7 +56,7 @@ Open your host in the project you want to change, then invoke DeLM with a reques
 | Host | Start a run |
 | --- | --- |
 | Codex | `$delm:run <your task>` |
-| Claude Code | `/delm:run <your task>` |
+| Claude Code | `/delm:run [--minutes N \| --hours N] <your task>` |
 
 For example, in Claude Code:
 
@@ -64,6 +64,8 @@ For example, in Claude Code:
 /delm:run Build a task board with drag-and-drop columns, local persistence,
 and keyboard controls. Include a README and test the main interactions.
 ```
+
+A run stops after 30 minutes by default. In Claude Code, `--minutes N` or `--hours N` before the task extends that allowance, up to 24 hours: `/delm:run --hours 2 <your task>`.
 
 Use `$delm:run` for the same request in Codex. Send clarifications in the same conversation while the agents work.
 

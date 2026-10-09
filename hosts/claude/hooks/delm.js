@@ -1,6 +1,6 @@
 import {
   TOOL_PREFIX, commandOutcome, completeState, decodeLines,
-  followupText, nativeLaunchContext, parseReply, toolArguments, validateReady,
+  followupText, nativeLaunchContext, parseReply, parseRunArguments, toolArguments, validateReady,
 } from './protocol.js';
 import {registerBoard, observeBoard} from './board-view.js';
 
@@ -159,7 +159,7 @@ async function drain($, run, stream, initial) {
   }
 }
 
-async function start($, task, session) {
+async function start($, task, session, seconds) {
   const generation = generations.get(session) || 0;
   if (await $.session.id() !== session) throw new Error('The conversation changed before preparation. Retry /delm:run here.');
   const connection = await $.mcp.connect('delm');
@@ -174,7 +174,8 @@ async function start($, task, session) {
   try { hostVersion = (await $.session.version()).version; } catch { /* Optional diagnostic metadata. */ }
   const stream = $.process.spawn({
     argv: [$.plugin.root + '/bin/delm', 'claude', 'serve'],
-    input: JSON.stringify({project, session_id: session, task, host_version: hostVersion, package_root: $.plugin.root}) + '\n',
+    input: JSON.stringify({project, session_id: session, task, host_version: hostVersion, package_root: $.plugin.root,
+      ...(seconds ? {seconds} : {})}) + '\n',
   });
   let buffer = '';
   let stderr = '';
@@ -626,14 +627,16 @@ export function register(on) {
   on('command.run', {command: 'delm:run'}, async ($, e, next) => {
     const session = await $.session.id();
     if (starts.has(session)) return {text: 'DeLM is preparing this conversation. Wait for its native peers to start.'};
-    if (!e.args.trim()) return {text: 'Use /delm:run followed by the task you want to complete.'};
+    let launch;
+    try { launch = parseRunArguments(e.args); } catch (error) { return {text: 'DeLM could not start: ' + error.message, exitCode: 1}; }
+    if (!launch.task) return {text: 'Use /delm:run, optionally --minutes N or --hours N, followed by the task you want to complete.'};
     starts.add(session);
     try {
       const known = await currentRun($);
       if (known && !known.finished) return {text: ownsConversation(known)
         ? 'DeLM is already working in this conversation. Send a follow-up, or use /delm-stop first.'
         : 'The previous DeLM run needs finishing or recovery before another run can start. You can use Claude normally here. Open /delm-status for its recovery state, or use /delm-stop to save unfinished changes.'};
-      const run = await start($, e.args.trim(), session);
+      const run = await start($, launch.task, session, launch.seconds);
       return next({...e, args: nativeLaunchContext(run.task, run.prompt)});
     } catch (error) {
       const run = runs.get(session);

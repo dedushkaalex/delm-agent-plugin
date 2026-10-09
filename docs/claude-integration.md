@@ -4,7 +4,7 @@ Claude Code and Codex share DeLM's worker policy, task board, contribution forma
 
 ## Native execution
 
-The official `/delm:run` skill is explicit-only. A plugin module intercepts it, checks the MCP connection, and prepares the project before the parent makes a short launch turn. That turn issues exactly two native `fork` Agent calls together. Spawn middleware assigns the two prepared directories and binds each returned agent identity. Forks inherit the conversation, system prompt, model, and available native tools. The worker policy appears once in the inherited context, with a short pointer in each launch call.
+The official `/delm:run` skill is explicit-only. A plugin module intercepts it, reads an optional `--minutes N` or `--hours N` prefix into the launch request's `seconds` (the runtime default is 30 minutes, the ceiling 24 hours), checks the MCP connection, and prepares the project before the parent makes a short launch turn. That turn issues exactly two native `fork` Agent calls together. Spawn middleware assigns the two prepared directories and binds each returned agent identity. Forks inherit the conversation, system prompt, model, and available native tools. The worker policy appears once in the inherited context, with a short pointer in each launch call.
 
 The parent launch turn is deliberate. On Claude Code 2.1.289 in Auto mode, direct plugin-origin `$.agent.spawn` has no server classifier verdict and is refused. Native model-issued Agent calls receive the ordinary permission review. DeLM uses this supported path without changing permission mode or adding allow rules. Finished peers resume through native SendMessage under their existing identities. Active peers receive context updates through native session append.
 

@@ -2,7 +2,7 @@
 name: run
 description: Build in parallel with collaborating Claude Code agents and deliver their changes to your project.
 disable-model-invocation: true
-argument-hint: <task>
+argument-hint: [--minutes N | --hours N] <task>
 ---
 
 Use DeLM only when the user explicitly invokes this command. The native DeLM module prepares the run and supplies its launch context below. If that context is missing, explain that DeLM did not initialize and ask the user to restart Claude Code with the plugin enabled. Do not invent worker paths, start another runtime, or substitute ordinary subagents for native conversation forks.

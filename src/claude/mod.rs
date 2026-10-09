@@ -53,6 +53,16 @@ struct Start {
     task: String,
     host_version: Option<String>,
     package_root: Option<PathBuf>,
+    seconds: Option<u64>,
+}
+
+fn execution_allowance(seconds: Option<u64>) -> Result<Duration> {
+    let seconds = seconds.unwrap_or(crate::config::DEFAULT_RUN_SECONDS);
+    ensure!(
+        (1..=24 * 60 * 60).contains(&seconds),
+        "Execution allowance must be between one second and 24 hours"
+    );
+    Ok(Duration::from_secs(seconds))
 }
 
 async fn line(input: &mut (impl AsyncBufRead + Unpin)) -> Result<Option<Vec<u8>>> {
@@ -134,6 +144,7 @@ async fn serve() -> Result<()> {
         .context("Missing Claude launch request")?;
     let start: Start = serde_json::from_slice(&bytes)?;
     ensure!(start.project.is_absolute(), "Project path must be absolute");
+    let allowance = execution_allowance(start.seconds)?;
     let native_host =
         crate::supervisor::ProcessIdentity::capture(unsafe { libc::getppid() } as u32)?;
     let executable = crate::package::retained_executable()?;
@@ -171,8 +182,7 @@ async fn serve() -> Result<()> {
         return Err(error);
     }
     let mut heartbeat = tokio::time::interval(Duration::from_secs(2));
-    let deadline =
-        tokio::time::Instant::now() + Duration::from_secs(crate::config::DEFAULT_RUN_SECONDS);
+    let deadline = tokio::time::Instant::now() + allowance;
     let mut deadline_sent = false;
     loop {
         tokio::select! {
@@ -349,6 +359,23 @@ mod tests {
         assert!(tools.iter().any(|tool| tool["name"] == "delm_service"));
         assert!(tools.iter().all(|tool| tool.get("deferLoading").is_none()
             && tool["inputSchema"]["properties"]["_delm"]["additionalProperties"] == false));
+    }
+    #[test]
+    fn the_launch_request_may_extend_the_execution_allowance_within_a_day() {
+        let start: Start =
+            serde_json::from_str(r#"{"project":"/p","session_id":"s","task":"t","seconds":7200}"#)
+                .unwrap();
+        assert_eq!(start.seconds, Some(7200));
+        assert_eq!(
+            execution_allowance(None).unwrap(),
+            Duration::from_secs(crate::config::DEFAULT_RUN_SECONDS)
+        );
+        assert_eq!(
+            execution_allowance(Some(7200)).unwrap(),
+            Duration::from_secs(7200)
+        );
+        assert!(execution_allowance(Some(0)).is_err());
+        assert!(execution_allowance(Some(24 * 60 * 60 + 1)).is_err());
     }
     #[test]
     fn protocol_negotiation_does_not_claim_unknown_future_versions() {

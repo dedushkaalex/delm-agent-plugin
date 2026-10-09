@@ -113,3 +113,15 @@ export function followupText(prompt) {
   }
   return text;
 }
+
+const ALLOWANCE = /^--(minutes|hours)\s+(\d+(?:\.\d+)?)(?:\s+|$)/;
+
+export function parseRunArguments(text) {
+  const match = text.match(ALLOWANCE);
+  if (!match) return {task: text.trim(), seconds: null};
+  const seconds = Math.round(Number(match[2]) * (match[1] === 'hours' ? 3600 : 60));
+  if (!(seconds >= 60 && seconds <= 24 * 3600)) {
+    throw new Error('--' + match[1] + ' must give between one minute and 24 hours.');
+  }
+  return {task: text.slice(match[0].length).trim(), seconds};
+}
